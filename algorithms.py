@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+from scipy.stats import mode
 from dataclasses import dataclass
 from typing import Optional
 from collections import Counter
@@ -94,7 +95,7 @@ class DecisionTree:
     def _build_tree(self, X, y, depth=0):
         num_classes = len(np.unique(y))
         num_samples = len(y)
-        
+
         if (depth >= self.max_depth or
             num_classes == 1 or
             num_samples < self.min_samples_split):
@@ -119,27 +120,60 @@ class DecisionTree:
         return Node(feat_idx=best_feat, threshold=best_thresh, left=left, right=right)
 
     def _best_split(self, X, y):
-        best_gain = 0
-        split_idx, split_thresh = None, None
-        for feat_idx in range(X.shape[1]):
-            thresholds = np.unique(X[:, feat_idx])
-            for thresh in thresholds:
-                gain = self._gini_gain(y, X[:, feat_idx], thresh)
-                if gain > best_gain:
-                    best_gain = gain
-                    split_idx = feat_idx
-                    split_thresh = thresh
-        return split_idx, split_thresh
+        n_samples, n_features = X.shape
+        if n_samples <= 1:
+            return None, None
 
-    def _gini_gain(self, y, feature_column, threshold):
-        left_idx = feature_column <= threshold
-        right_idx = feature_column > threshold
-        n, n_left, n_right = len(y), len(y[left_idx]), len(y[right_idx])
+        best_gain = 0
+        best_feat, best_thresh = None, None
         parent_gini = self._gini(y)
-        gini_left = self._gini(y[left_idx])
-        gini_right = self._gini(y[right_idx])
-        child_gini = (n_left / n) * gini_left + (n_right / n) * gini_right
-        return parent_gini - child_gini
+
+        classes, y_encoded = np.unique(y, return_inverse=True)
+        n_classes = len(classes)
+
+        for feat_idx in range(n_features):
+            # Sort samples by this feature
+            sort_idx = np.argsort(X[:, feat_idx])
+            X_sorted = X[sort_idx, feat_idx]
+            y_sorted = y_encoded[sort_idx]
+
+            # Class counts cumulative (prefix sums)
+            left_counts = np.zeros((n_samples, n_classes), dtype=int)
+            np.add.at(left_counts, np.arange(n_samples), np.eye(n_classes, dtype=int)[y_sorted])
+            left_counts = np.cumsum(left_counts, axis=0)
+
+            total_counts = left_counts[-1]
+            left_n = np.arange(1, n_samples + 1)
+            right_n = n_samples - left_n
+
+            # Avoid division by zero
+            left_n[left_n == 0] = 1
+            right_n[right_n == 0] = 1
+
+            # Compute probabilities and Gini impurities
+            left_prob = left_counts / left_n[:, None]
+            right_prob = (total_counts - left_counts) / right_n[:, None]
+
+            gini_left = 1.0 - np.sum(left_prob ** 2, axis=1)
+            gini_right = 1.0 - np.sum(right_prob ** 2, axis=1)
+
+            # Weighted Gini for each split
+            weighted_gini = (left_n / n_samples) * gini_left + (right_n / n_samples) * gini_right
+            gains = parent_gini - weighted_gini
+
+            # Ignore invalid (duplicate feature values)
+            mask = np.r_[True, np.diff(X_sorted) > 0]
+            gains[~mask] = -np.inf
+
+            # Get best threshold for this feature
+            i_best = np.argmax(gains)
+            gain = gains[i_best]
+            if gain > best_gain:
+                best_gain = gain
+                best_feat = feat_idx
+                best_thresh = (X_sorted[i_best] + X_sorted[i_best - 1]) / 2 if i_best > 0 else X_sorted[0]
+
+        return best_feat, best_thresh
 
     def _gini(self, y):
         if len(y) == 0:
@@ -162,19 +196,28 @@ class DecisionTree:
             return self._predict(inputs, node.right)
 
 class RandomForest:
-    def __init__(self, n_estimators=10, max_depth=3, min_samples_split=2, subsample=0.5, colsample=0.5):
+    def __init__(self, n_estimators=10, max_depth=3, min_samples_split=2, subsample=0.5, colsample=0.5, random_state=None):
         self.n_estimators = n_estimators
         self.max_depth = max_depth
         self.min_samples_split = min_samples_split
         self.subsample = subsample
+        self.colsample = colsample
+        self.random_state = random_state
+        self.feat_idx = []
         self.trees = []
 
     def fit(self, X, y):
+        np.random.seed(self.random_state)
         X = np.asarray(X, float)
         y = np.array(y)
-        self.trees = []
+        assert len(X) == len(y), f'Number of entries in X ({len(X)}) does not match that in y ({len(y)})'
+        
+        n, m = X.shape
         for i in range(self.n_estimators):
-            X_sample, y_sample = self._bootstrap_sample(X, y)
+            rows = np.random.choice(np.arange(n), int(self.subsample * n), replace=True)
+            cols = np.random.choice(np.arange(m), int(self.colsample * m), replace=False)
+            self.feat_idx.append(cols)
+            X_sample, y_sample = X[np.ix_(rows, cols)], y[rows]
             tree = DecisionTree(
                 max_depth=self.max_depth,
                 min_samples_split=self.min_samples_split
@@ -182,16 +225,76 @@ class RandomForest:
             tree.fit(X_sample, y_sample)
             self.trees.append(tree)
 
-    def _bootstrap_sample(self, X, y):
-        n_samples = len(X)
-        indices = np.random.choice(np.arange(n_samples), n_samples * self.subsample, replace=True)
-        return X[indices], y[indices]
-
     def predict(self, X):
         X = np.asarray(X, float)
-        tree_preds = [tree.predict(X) for tree in self.trees]
-        tree_preds = list(zip(*tree_preds))
-        return np.array([self._most_common_label(preds) for preds in tree_preds])
+        all_preds = np.vstack([
+            tree.predict(X[:, cols])
+            for tree, cols in zip(self.trees, self.feat_idx)
+        ])
+        y_pred, _ = mode(all_preds, axis=0, keepdims=False)
+        return y_pred
 
-    def _most_common_label(self, labels):
-        return Counter(labels).most_common(1)[0][0]
+class SVM:
+    def __init__(self, epochs=100, learning_rate=0.01, c=0.01):
+        self.learning_rate = learning_rate
+        self.c = c
+        self.epochs = epochs
+        self.w = None
+        self.b = None
+
+    def sigmoid(self, z):
+        return 1 / (1 + np.exp(-z))
+
+    def fit(self, X, y):
+        X = np.asarray(X, float)
+        y = np.array(y)
+        assert len(X) == len(y), f'Number of entries in X ({len(X)}) does not match that in y ({len(y)})'
+
+        y = np.where(y <= 0, -1, 1)
+        self.w = np.zeros(X.shape[1])
+        self.b = 0
+
+        for epoch in range(self.epochs):
+            for idx, x_i in enumerate(X):
+                condition = y[idx] * (x_i @ self.w - self.b) >= 1
+                if condition:
+                    self.w -= self.learning_rate * (self.c * self.w)
+                else:
+                    self.w -= self.learning_rate * (self.c * self.w - x_i * y[idx])
+                    self.b -= self.learning_rate * y[idx]
+
+    def predict_proba(self, X):
+        # This is not the correct way to determine 'probabilities'.
+        # This function is just designed to generalize for the OneVsAll class
+        # More details in the writeup.
+        X = np.asarray(X, float)
+        return self.sigmoid(X @ self.w - self.b)
+
+    def predict(self, X):
+        return np.where(self.predict_proba(X) >= 0.5, 1, 0)
+
+class OneVsAll:
+    def __init__(self, classifier, *args, **kwargs):
+        self.classifier = classifier
+        self.args = args
+        self.kwargs = kwargs
+        self.models = []
+        self.classes = None
+
+    def fit(self, X, y):
+        X = np.asarray(X, float)
+        y = np.array(y)
+        assert len(X) == len(y), f'Number of entries in X ({len(X)}) does not match that in y ({len(y)})'
+
+        self.classes = np.unique(y)
+        for i in self.classes:
+            model = self.classifier(*self.args, **self.kwargs)
+            model.fit(X, np.where(y == i, 1, 0))
+            self.models.append(model)
+
+    def predict_proba(self, X):
+        X = np.asarray(X, float)
+        return np.vstack([model.predict_proba(X) for model in self.models])
+    
+    def predict(self, X):
+        return self.classes[self.predict_proba(X).argmax(axis=0)]
