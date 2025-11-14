@@ -1,11 +1,19 @@
-from algorithms import SoftmaxRegression, DecisionTree, RandomForest, SVM, OneVsAll, read_data
+from algorithms import (
+    SoftmaxRegression,
+    DecisionTree,
+    RandomForest,
+    SVM,
+    Perceptron,
+    OneVsAll,
+    read_data
+)
 from sklearn.metrics import ConfusionMatrixDisplay, classification_report
 import matplotlib.pyplot as plt
 import time
 
 X_train, y_train, X_val, y_val = read_data()
 
-model = OneVsAll(SVM, epochs=100, learning_rate=0.01, c=0)
+model = OneVsAll(Perceptron, epochs=100)
 
 start = time.time()
 model.fit(X_train, y_train)

@@ -234,6 +234,38 @@ class RandomForest:
         y_pred, _ = mode(all_preds, axis=0, keepdims=False)
         return y_pred
 
+class Perceptron:
+    def __init__(self, epochs=100):
+        self.epochs = epochs
+        self.w = None
+        self.b = None
+
+    def fit(self, X, y):
+        X = np.asarray(X, float)
+        y = np.array(y)
+        assert len(X) == len(y), f'Number of entries in X ({len(X)}) does not match that in y ({len(y)})'
+
+        y = np.where(y <= 0, -1, 1)
+        self.w = np.zeros(X.shape[1])
+        self.b = 0
+
+        for epoch in range(self.epochs):
+            pred = X @ self.w + self.b
+            mask = y * pred <= 0
+            if np.any(mask):
+                self.w += np.sum(X[mask] * y[mask, np.newaxis], axis=0)
+                self.b += np.sum(y[mask])
+            else:
+                print(f'Converged in {epoch} epochs. Stopping training')
+                break
+
+    def predict_score(self, X):
+        X = np.asarray(X, float)
+        return X @ self.w + self.b
+
+    def predict(self, X):
+        return np.where(self.predict_score(X) >= 0, 1, 0)
+
 class SVM:
     def __init__(self, epochs=100, learning_rate=0.01, c=0.01):
         self.learning_rate = learning_rate
@@ -241,9 +273,6 @@ class SVM:
         self.epochs = epochs
         self.w = None
         self.b = None
-
-    def sigmoid(self, z):
-        return 1 / (1 + np.exp(-z))
 
     def fit(self, X, y):
         X = np.asarray(X, float)
@@ -256,22 +285,19 @@ class SVM:
 
         for epoch in range(self.epochs):
             for idx, x_i in enumerate(X):
-                condition = y[idx] * (x_i @ self.w - self.b) >= 1
+                condition = y[idx] * (x_i @ self.w + self.b) >= 1
                 if condition:
                     self.w -= self.learning_rate * (self.c * self.w)
                 else:
                     self.w -= self.learning_rate * (self.c * self.w - x_i * y[idx])
-                    self.b -= self.learning_rate * y[idx]
+                    self.b += self.learning_rate * y[idx]
 
-    def predict_proba(self, X):
-        # This is not the correct way to determine 'probabilities'.
-        # This function is just designed to generalize for the OneVsAll class
-        # More details in the writeup.
+    def predict_score(self, X):
         X = np.asarray(X, float)
-        return self.sigmoid(X @ self.w - self.b)
+        return X @ self.w + self.b
 
     def predict(self, X):
-        return np.where(self.predict_proba(X) >= 0.5, 1, 0)
+        return np.where(self.predict_score(X) >= 0.5, 1, 0)
 
 class OneVsAll:
     def __init__(self, classifier, *args, **kwargs):
@@ -294,7 +320,11 @@ class OneVsAll:
 
     def predict_proba(self, X):
         X = np.asarray(X, float)
-        return np.vstack([model.predict_proba(X) for model in self.models])
+        if hasattr(self.classifier, 'predict_proba'):
+            return np.vstack([model.predict_proba(X) for model in self.models])
+        elif hasattr(self.classifier, 'predict_score'):
+            preds = np.vstack([model.predict_score(X) for model in self.models])
+            return (preds - preds.min(axis=1, keepdims=True)) / (preds.max(axis=1, keepdims=True) - preds.min(axis=1, keepdims=True))
     
     def predict(self, X):
         return self.classes[self.predict_proba(X).argmax(axis=0)]
