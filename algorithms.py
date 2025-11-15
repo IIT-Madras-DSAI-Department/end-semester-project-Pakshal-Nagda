@@ -225,13 +225,23 @@ class RandomForest:
             tree.fit(X_sample, y_sample)
             self.trees.append(tree)
 
+    def predict_proba(self, X):
+        X = np.asarray(X, float, copy=True)
+        all_probas = np.array([
+            tree.predict_proba(X[:, cols])
+            for tree, cols in zip(self.trees, self.feat_idx)
+        ])
+        avg_probas = all_probas.mean(axis=0)
+
+        return avg_probas
+
     def predict(self, X):
         X = np.asarray(X, float, copy=True)
         all_preds = np.vstack([
             tree.predict(X[:, cols])
             for tree, cols in zip(self.trees, self.feat_idx)
         ])
-        y_pred, _ = mode(all_preds, axis=0, keepdims=False)
+        y_pred, _ = mode(all_preds, axis=0).mode
         return y_pred
 
 class Perceptron:
@@ -393,32 +403,35 @@ class PCA:
         return self.transform(X)
 
 class VotingEnsembler:
-    def __init__(self, classifiers, soft=True):
+    def __init__(self, classifiers):
         self.classifiers = classifiers
-        self.soft = soft
 
     def fit(self, X, y):
         for model in self.classifiers:
             model.fit(X, y)
     
     def predict(self, X):
-        if self.soft:
-            preds = np.mean([model.predict_proba(X) for model in self.classifiers], axis=0)
-            return preds.argmax(axis=1)
-        else:
-            preds = np.vstack([model.predict(X) for model in self.classifiers])
-            return mode(preds, axis=0, keepdims=False)[0]
+        probs = [model.predict_proba(X) for model in self.classifiers]
+        preds = np.mean(probs, axis=0)
+        return preds.argmax(axis=1)
+
 
 class StackingEnsembler:
-    def __init__(self, models, meta_model):
+    def __init__(self, models, meta_model, val_frac):
         self.models = models
         self.meta_model = meta_model
+        self.val_frac = val_frac
 
     def fit(self, X, y):
+        n_val = int(len(X) * self.val_frac)
+        X_train, X_val = X[:-n_val], X[-n_val:]
+        y_train, y_val = y[:-n_val], y[-n_val:]
+        for model in self.models:
+            model.fit(X_train, y_train)
+        preds = np.hstack([model.predict_proba(X_val) for model in self.models])
+        self.meta_model.fit(preds, y_val)
         for model in self.models:
             model.fit(X, y)
-        preds = np.hstack([model.predict_proba(X) for model in self.models])
-        self.meta_model.fit(preds, y)
 
     def predict(self, X):
         preds = np.hstack([model.predict_proba(X) for model in self.models])
