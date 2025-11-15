@@ -324,7 +324,37 @@ class OneVsAll:
             return np.vstack([model.predict_proba(X) for model in self.models])
         elif hasattr(self.classifier, 'predict_score'):
             preds = np.vstack([model.predict_score(X) for model in self.models])
-            return (preds - preds.min(axis=1, keepdims=True)) / (preds.max(axis=1, keepdims=True) - preds.min(axis=1, keepdims=True))
+            return (preds - preds.min(axis=1, keepdims=True)) / (preds.max(axis=1, keepdims=True) - preds.min(axis=1, keepdims=True) + 1e-12)
     
     def predict(self, X):
         return self.classes[self.predict_proba(X).argmax(axis=0)]
+
+class OneVsOne:
+    def __init__(self, classifier, *args, **kwargs):
+        self.classifier = classifier
+        self.args = args
+        self.kwargs = kwargs
+        self.models = {}
+
+    def fit(self, X, y):
+        X = np.asarray(X, float)
+        y = np.array(y)
+        assert len(X) == len(y), f'Number of entries in X ({len(X)}) does not match that in y ({len(y)})'
+
+        self.classes = np.unique(y)
+        for i in range(len(self.classes)):
+            for j in range(i+1, len(self.classes)):
+                model = self.classifier(*self.args, **self.kwargs)
+                filter = (y == self.classes[i]) | (y == self.classes[j])
+                X_ij, y_ij = X[filter], (y[filter] == self.classes[i]).astype(int)
+                model.fit(X_ij, y_ij)
+                self.models[(i, j)] = model
+
+    def predict(self, X):
+        X = np.asarray(X, float)
+        votes = np.zeros((len(self.classes), len(X)))
+        for (i, j), model in self.models.items():
+            preds = model.predict(X)
+            votes[i] += (preds == 1)
+            votes[j] += (preds == 0)
+        return self.classes[votes.argmax(axis=0)]

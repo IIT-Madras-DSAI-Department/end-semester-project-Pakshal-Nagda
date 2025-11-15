@@ -5,6 +5,7 @@ from algorithms import (
     SVM,
     Perceptron,
     OneVsAll,
+    OneVsOne,
     read_data
 )
 from sklearn.metrics import ConfusionMatrixDisplay, classification_report
@@ -13,7 +14,7 @@ import time
 
 X_train, y_train, X_val, y_val = read_data()
 
-model = OneVsAll(Perceptron, epochs=100)
+model = OneVsOne(Perceptron, epochs=5000)
 
 start = time.time()
 model.fit(X_train, y_train)
