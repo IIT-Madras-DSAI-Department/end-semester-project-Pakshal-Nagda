@@ -7,6 +7,8 @@ from algorithms import (
     OneVsAll,
     OneVsOne,
     PCA,
+    VotingEnsembler,
+    StackingEnsembler,
     read_data
 )
 from sklearn.metrics import ConfusionMatrixDisplay, accuracy_score, f1_score
@@ -19,13 +21,13 @@ train_acc = []
 val_acc = []
 train_f1 = []
 val_f1 = []
-n_components = [10, 100, 200, 500, 784]
+n_components = [10, 50, 100, 200, 500, 784]
 for n in n_components:
     pca = PCA(n)
     X_train_pca = pca.fit_transform(X_train)
     X_val_pca = pca.transform(X_val)
 
-    model = OneVsAll(SVM)
+    model = OneVsAll(Perceptron, 500)
 
     start = time.time()
     model.fit(X_train_pca, y_train)
@@ -48,7 +50,7 @@ plt.plot(n_components, train_acc, 'o--', label='Training Accuracy')
 plt.plot(n_components, val_acc, 'o-', label='Validation Accuracy')
 plt.plot(n_components, train_f1, 's--', label='Training F1 Score')
 plt.plot(n_components, val_f1, 's-', label='Validation F1 Score')
-plt.title('Performance of SVM (OvA) with PCA')
+plt.title('Performance of Perceptron (OvA) with PCA')
 plt.xlabel('PCA Components')
 plt.ylabel('Metric')
 plt.legend()

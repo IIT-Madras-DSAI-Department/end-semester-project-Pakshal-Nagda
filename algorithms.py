@@ -297,7 +297,7 @@ class SVM:
         return X @ self.w + self.b
 
     def predict(self, X):
-        return np.where(self.predict_score(X) >= 0.5, 1, 0)
+        return np.where(self.predict_score(X) >= 0, 1, 0)
 
 class OneVsAll:
     def __init__(self, classifier, *args, **kwargs):
@@ -306,6 +306,11 @@ class OneVsAll:
         self.kwargs = kwargs
         self.models = []
         self.classes = None
+
+    def softmax(self, z, axis):
+        z -= np.max(z, axis=axis, keepdims=True)
+        p = np.exp(z)
+        return p / p.sum(axis=axis, keepdims=True)
 
     def fit(self, X, y):
         X = np.asarray(X, float, copy=True)
@@ -324,8 +329,8 @@ class OneVsAll:
             return np.vstack([model.predict_proba(X) for model in self.models]).T
         elif hasattr(self.classifier, 'predict_score'):
             preds = np.vstack([model.predict_score(X) for model in self.models]).T
-            return (preds - preds.min(axis=0, keepdims=True)) / (preds.max(axis=0, keepdims=True) - preds.min(axis=0, keepdims=True) + 1e-12)
-    
+            return self.softmax(preds, axis=1)
+
     def predict(self, X):
         return self.classes[self.predict_proba(X).argmax(axis=1)]
 
@@ -360,6 +365,7 @@ class OneVsOne:
         return (votes / votes.sum(axis=0, keepdims=True)).T
     
     def predict(self, X):
+        assert np.allclose(self.predict_proba(X).sum(axis=1), np.ones(len(X)))
         return self.classes[self.predict_proba(X).argmax(axis=1)]
 
 class PCA:
@@ -396,8 +402,12 @@ class VotingEnsembler:
             model.fit(X, y)
     
     def predict(self, X):
-        preds = np.vstack([model.predict(X) for model in self.classifiers])
-        return preds.argmax(axis=0)
+        if self.soft:
+            preds = np.mean([model.predict_proba(X) for model in self.classifiers], axis=0)
+            return preds.argmax(axis=1)
+        else:
+            preds = np.vstack([model.predict(X) for model in self.classifiers])
+            return mode(preds, axis=0, keepdims=False)[0]
 
 class StackingEnsembler:
     def __init__(self, models, meta_model):
@@ -407,9 +417,9 @@ class StackingEnsembler:
     def fit(self, X, y):
         for model in self.models:
             model.fit(X, y)
-        preds = np.vstack([model.predict(X) for model in self.models])
-        self.meta_model.fit(preds.T, y)
+        preds = np.hstack([model.predict_proba(X) for model in self.models])
+        self.meta_model.fit(preds, y)
 
-    def predict(self, X, y):
-        preds = np.vstack([model.predict(X) for model in self.models])
-        return self.meta_model.predict(preds.T)
+    def predict(self, X):
+        preds = np.hstack([model.predict_proba(X) for model in self.models])
+        return self.meta_model.predict(preds)
