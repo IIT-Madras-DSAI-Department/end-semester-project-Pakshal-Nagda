@@ -36,7 +36,7 @@ class SoftmaxRegression:
 
     def fit(self, X, y):
         np.random.seed(self.random_state)
-        X = np.asarray(X, float)
+        X = np.asarray(X, float, copy=True)
         y = np.asarray(y)
         assert len(X) == len(y), f'Number of entries in X ({len(X)}) does not match that in y ({len(y)})'
 
@@ -62,7 +62,7 @@ class SoftmaxRegression:
                 self.weights -= self.learning_rate * (X_batch.T @ (y_hat - y_batch))
 
     def predict_proba(self, X):
-        X = np.asarray(X, float)
+        X = np.asarray(X, float, copy=True)
         X = np.c_[np.ones((len(X), 1)), X]
         return self.softmax(X @ self.weights)
 
@@ -87,7 +87,7 @@ class DecisionTree:
         self.root = None
 
     def fit(self, X, y):
-        X = np.asarray(X, float)
+        X = np.asarray(X, float, copy=True)
         y = np.array(y)
         assert len(X) == len(y), f'Number of entries in X ({len(X)}) does not match that in y ({len(y)})'
         self.root = self._build_tree(X, y)
@@ -184,7 +184,7 @@ class DecisionTree:
         return Counter(y).most_common(1)[0][0]
 
     def predict(self, X):
-        X = np.asarray(X, float)
+        X = np.asarray(X, float, copy=True)
         return np.array([self._predict(inputs, self.root) for inputs in X])
 
     def _predict(self, inputs, node):
@@ -208,7 +208,7 @@ class RandomForest:
 
     def fit(self, X, y):
         np.random.seed(self.random_state)
-        X = np.asarray(X, float)
+        X = np.asarray(X, float, copy=True)
         y = np.array(y)
         assert len(X) == len(y), f'Number of entries in X ({len(X)}) does not match that in y ({len(y)})'
         
@@ -226,7 +226,7 @@ class RandomForest:
             self.trees.append(tree)
 
     def predict(self, X):
-        X = np.asarray(X, float)
+        X = np.asarray(X, float, copy=True)
         all_preds = np.vstack([
             tree.predict(X[:, cols])
             for tree, cols in zip(self.trees, self.feat_idx)
@@ -241,7 +241,7 @@ class Perceptron:
         self.b = None
 
     def fit(self, X, y):
-        X = np.asarray(X, float)
+        X = np.asarray(X, float, copy=True)
         y = np.array(y)
         assert len(X) == len(y), f'Number of entries in X ({len(X)}) does not match that in y ({len(y)})'
 
@@ -260,7 +260,7 @@ class Perceptron:
                 break
 
     def predict_score(self, X):
-        X = np.asarray(X, float)
+        X = np.asarray(X, float, copy=True)
         return X @ self.w + self.b
 
     def predict(self, X):
@@ -275,7 +275,7 @@ class SVM:
         self.b = None
 
     def fit(self, X, y):
-        X = np.asarray(X, float)
+        X = np.asarray(X, float, copy=True)
         y = np.array(y)
         assert len(X) == len(y), f'Number of entries in X ({len(X)}) does not match that in y ({len(y)})'
 
@@ -293,7 +293,7 @@ class SVM:
                     self.b += self.learning_rate * y[idx]
 
     def predict_score(self, X):
-        X = np.asarray(X, float)
+        X = np.asarray(X, float, copy=True)
         return X @ self.w + self.b
 
     def predict(self, X):
@@ -308,7 +308,7 @@ class OneVsAll:
         self.classes = None
 
     def fit(self, X, y):
-        X = np.asarray(X, float)
+        X = np.asarray(X, float, copy=True)
         y = np.array(y)
         assert len(X) == len(y), f'Number of entries in X ({len(X)}) does not match that in y ({len(y)})'
 
@@ -319,15 +319,15 @@ class OneVsAll:
             self.models.append(model)
 
     def predict_proba(self, X):
-        X = np.asarray(X, float)
+        X = np.asarray(X, float, copy=True)
         if hasattr(self.classifier, 'predict_proba'):
-            return np.vstack([model.predict_proba(X) for model in self.models])
+            return np.vstack([model.predict_proba(X) for model in self.models]).T
         elif hasattr(self.classifier, 'predict_score'):
-            preds = np.vstack([model.predict_score(X) for model in self.models])
-            return (preds - preds.min(axis=1, keepdims=True)) / (preds.max(axis=1, keepdims=True) - preds.min(axis=1, keepdims=True) + 1e-12)
+            preds = np.vstack([model.predict_score(X) for model in self.models]).T
+            return (preds - preds.min(axis=0, keepdims=True)) / (preds.max(axis=0, keepdims=True) - preds.min(axis=0, keepdims=True) + 1e-12)
     
     def predict(self, X):
-        return self.classes[self.predict_proba(X).argmax(axis=0)]
+        return self.classes[self.predict_proba(X).argmax(axis=1)]
 
 class OneVsOne:
     def __init__(self, classifier, *args, **kwargs):
@@ -337,7 +337,7 @@ class OneVsOne:
         self.models = {}
 
     def fit(self, X, y):
-        X = np.asarray(X, float)
+        X = np.asarray(X, float, copy=True)
         y = np.array(y)
         assert len(X) == len(y), f'Number of entries in X ({len(X)}) does not match that in y ({len(y)})'
 
@@ -350,11 +350,66 @@ class OneVsOne:
                 model.fit(X_ij, y_ij)
                 self.models[(i, j)] = model
 
-    def predict(self, X):
-        X = np.asarray(X, float)
+    def predict_proba(self, X):
+        X = np.asarray(X, float, copy=True)
         votes = np.zeros((len(self.classes), len(X)))
         for (i, j), model in self.models.items():
             preds = model.predict(X)
             votes[i] += (preds == 1)
             votes[j] += (preds == 0)
-        return self.classes[votes.argmax(axis=0)]
+        return (votes / votes.sum(axis=0, keepdims=True)).T
+    
+    def predict(self, X):
+        return self.classes[self.predict_proba(X).argmax(axis=1)]
+
+class PCA:
+    def __init__(self, n_components):
+        self.n_components = n_components
+        self.components_ = None
+        self.mean_ = None
+
+    def fit(self, X):
+        X = np.asarray(X, float, copy=True)
+        self.mean_ = X.mean(axis=0)
+        X -= self.mean_
+        U, S, VT = np.linalg.svd(X, full_matrices=False)
+        self.components_ = VT[:self.n_components]
+
+    def transform(self, X):
+        if self.components_ is None:
+            raise ValueError("PCA has not been fit yet.")
+        X = np.asarray(X, float, copy=True)
+        X -= self.mean_
+        return X @ self.components_.T
+
+    def fit_transform(self, X):
+        self.fit(X)
+        return self.transform(X)
+
+class VotingEnsembler:
+    def __init__(self, classifiers, soft=True):
+        self.classifiers = classifiers
+        self.soft = soft
+
+    def fit(self, X, y):
+        for model in self.classifiers:
+            model.fit(X, y)
+    
+    def predict(self, X):
+        preds = np.vstack([model.predict(X) for model in self.classifiers])
+        return preds.argmax(axis=0)
+
+class StackingEnsembler:
+    def __init__(self, models, meta_model):
+        self.models = models
+        self.meta_model = meta_model
+
+    def fit(self, X, y):
+        for model in self.models:
+            model.fit(X, y)
+        preds = np.vstack([model.predict(X) for model in self.models])
+        self.meta_model.fit(preds.T, y)
+
+    def predict(self, X, y):
+        preds = np.vstack([model.predict(X) for model in self.models])
+        return self.meta_model.predict(preds.T)
