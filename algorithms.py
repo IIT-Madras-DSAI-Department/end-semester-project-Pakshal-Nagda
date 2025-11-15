@@ -227,13 +227,28 @@ class RandomForest:
 
     def predict_proba(self, X):
         X = np.asarray(X, float, copy=True)
-        all_probas = np.array([
-            tree.predict_proba(X[:, cols])
-            for tree, cols in zip(self.trees, self.feat_idx)
-        ])
-        avg_probas = all_probas.mean(axis=0)
+        n_samples = X.shape[0]
 
-        return avg_probas
+        # Get predictions from each tree
+        all_preds = np.array([
+            tree.predict(X[:, cols])
+            for tree, cols in zip(self.trees, self.feat_idx)
+        ])  # shape: (n_trees, n_samples)
+
+        # Find all unique classes across all trees
+        classes = np.unique(all_preds)
+        n_classes = len(classes)
+        class_to_idx = {c: i for i, c in enumerate(classes)}
+
+        # Initialize probability array
+        probs = np.zeros((n_samples, n_classes))
+
+        # Count votes for each class
+        for i in range(n_samples):
+            counts = np.bincount([class_to_idx[c] for c in all_preds[:, i]], minlength=n_classes)
+            probs[i] = counts / self.n_estimators  # normalize to sum=1
+
+        return probs
 
     def predict(self, X):
         X = np.asarray(X, float, copy=True)
